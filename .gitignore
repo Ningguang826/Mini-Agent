@@ -1,0 +1,23 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+miniagent/*/sessions/
+miniagent/v08_eval/eval_results/
+miniagent/v08_eval/eval_work/
+
+.DS_Store
+labs/
+.verification/
+
+# Local course source and Feishu publishing tools
+/course/
+/scripts/check_code_references.py
+/scripts/check_course_assets.py
+/scripts/check_course_policy.py
+/scripts/check_preserved_prose.py
+/scripts/import_feishu_snapshot.py
+/scripts/publish_feishu_course.py
+/scripts/verify_feishu_course.py

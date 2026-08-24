@@ -1,0 +1,12 @@
+{
+  "01_cart_boundary": {"editable": ["cart.py"], "hidden_test": "01_cart_boundary.py"},
+  "02_mutable_default": {"editable": ["collector.py"], "hidden_test": "02_mutable_default.py"},
+  "03_str_sort": {"editable": ["ranking.py"], "hidden_test": "03_str_sort.py"},
+  "04_avg_empty": {"editable": ["stats.py"], "hidden_test": "04_avg_empty.py"},
+  "05_leap_year": {"editable": ["calendar_util.py"], "hidden_test": "05_leap_year.py"},
+  "06_shallow_copy": {"editable": ["grid.py"], "hidden_test": "06_shallow_copy.py"},
+  "07_greedy_regex": {"editable": ["parser.py"], "hidden_test": "07_greedy_regex.py"},
+  "08_accumulator": {"editable": ["batches.py"], "hidden_test": "08_accumulator.py"},
+  "09_dict_get": {"editable": ["wordcount.py"], "hidden_test": "09_dict_get.py"},
+  "10_pagination": {"editable": ["paging.py"], "hidden_test": "10_pagination.py"}
+}
