@@ -3,6 +3,8 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.history/
+.vscode/
 
 miniagent/*/sessions/
 miniagent/v08_eval/eval_results/
@@ -21,3 +23,6 @@ labs/
 /scripts/import_feishu_snapshot.py
 /scripts/publish_feishu_course.py
 /scripts/verify_feishu_course.py
+
+.history/
+.vscode/
