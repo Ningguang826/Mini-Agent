@@ -1,0 +1,29 @@
+# 统一文本文件编码与行尾（Windows 环境防 GBK 转码的关键配置）
+# 背景：中文 Windows 的系统 ANSI 代码页是 GBK（cp936）。没有本文件时，
+# git 的 core.autocrlf/text 处理可能在 checkout/触碰文件时按系统 ANSI 重编码，
+# 导致 UTF-8 的 .py 被写成 GBK，随后 Python/p Новости工具按 UTF-8 读取即报 UnicodeDecodeError。
+# （本仓库 2026-09-06 出现过一次：labs/cart_boundary/cart.py 变成 616 字节的 GBK 版本。）
+
+# 所有文本文件：git 仓库内统一 LF，工作区也保持 LF
+* text=auto eol=lf
+
+# Python 源码必须按 UTF-8 处理（Python 3 解释器也默认按 UTF-8 解析源码）
+*.py text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.ini text eol=lf
+*.env text eol=lf
+.env text eol=lf
+
+# Windows 专属脚本保持 CRLF
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制文件禁止任何转换
+*.png binary
+*.jpg binary
+*.pdf binary

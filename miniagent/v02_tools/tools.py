@@ -79,13 +79,15 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
 
 def run_bash(command: str) -> str:
     try:
-       
-        result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=30
-        )
         # shell=True: 交给系统 shell 解析，支持管道/&&/重定向；
         # capture_output=True: 抓回 stdout+stderr 而非直接打印到终端；
         # text=True: 把返回的字节流解码成字符串（bytes → str），省去手动 .decode()
+        # encoding+errors（Windows 关键）：不指定时子进程输出按系统 ANSI(GBK) 解码，
+        # 输出含中文会让读取线程崩溃、stdout 变 None（后续 None+str 报误导性 TypeError）
+        result = subprocess.run(
+            command, shell=True, capture_output=True, text=True, timeout=30,
+            encoding="utf-8", errors="replace",
+        )
 
     except subprocess.TimeoutExpired:
         return "错误：命令执行超过 30 秒，已终止"

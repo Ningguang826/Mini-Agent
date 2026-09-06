@@ -45,7 +45,9 @@ def read_file(path: str) -> str:
     p = Path(path)
     if not p.is_file():
         return f"错误：文件不存在 {path}"
-    text = p.read_text()
+    # encoding="utf-8"：Windows 默认按 GBK 解码，文件里有中文/UTF-8 字符时会 UnicodeDecodeError。
+    # 显式指定编码是 Windows 环境必备的防御（教材写这段时用的是 Linux/macOS）。
+    text = p.read_text(encoding="utf-8")
     if len(text) > 20_000:
         return text[:20_000] + f"\n...（文件过长，已截断，共 {len(text)} 字符）"
     return text
@@ -54,7 +56,8 @@ def read_file(path: str) -> str:
 def write_file(path: str, content: str) -> str:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content)
+    # encoding="utf-8"：不写的话 Windows 用 GBK 写入，之后 read_file 也用 utf-8 读就会报 UnicodeDecodeError
+    p.write_text(content, encoding="utf-8")
     return f"已写入 {path}（{len(content)} 字符）"
 
 
@@ -62,20 +65,27 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
     p = Path(path)
     if not p.is_file():
         return f"错误：文件不存在 {path}"
-    text = p.read_text()
+    text = p.read_text(encoding="utf-8")   # 同 read_file：Windows 默认 GBK，中文文件必须显式 utf-8
     count = text.count(old_text)
     if count == 0:
         return "错误：没有找到要替换的文本，请先 read_file 确认内容完全一致"
     if count > 1:
         return f"错误：要替换的文本出现了 {count} 次，请提供更长的上下文让它唯一"
-    p.write_text(text.replace(old_text, new_text))
+    # 关键：写入也必须显式 utf-8。edit_file 的完整流程是"utf-8 读 → 替换 → 写回"，
+    # 读对了但写回时不带 encoding，Windows 会按 GBK 落盘——文件反而被"读 UTF-8 写 GBK"转码污染。
+    p.write_text(text.replace(old_text, new_text), encoding="utf-8")
     return f"已修改 {path}"
 
 
 def run_bash(command: str) -> str:
     try:
+        # encoding="utf-8"（windows）：Windows shell 默认用 GBK 解码子进程输出；
+        # 命令输出里含中文（如 dir 的文件名）时，read 线程会在后台直接 UnicodeDecodeError，
+        # 导致 stdout/stderr 变成 None，随后 "None + str" 再抛 TypeError（你看到的连环报错）。
+        # errors="replace" 让解不了的字符退成 ? 而不是崩掉线程。
         result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=30
+            command, shell=True, capture_output=True, text=True,
+            timeout=30, encoding="utf-8", errors="replace",
         )
     except subprocess.TimeoutExpired:
         return "错误：命令执行超过 30 秒，已终止"
