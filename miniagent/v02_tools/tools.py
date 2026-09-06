@@ -40,13 +40,12 @@ def execute_tool_call(name: str, arguments: str | dict) -> str:
 
 # ---- 工具的实现：就是普通函数 ----
 
-
 def read_file(path: str) -> str:
     p = Path(path)
     if not p.is_file():
         return f"错误：文件不存在 {path}"
     text = p.read_text()
-    if len(text) > 20_000:
+    if len(text) > 20_000:  # 单位是"字符"（len() 数字符串长度），非 token；1 万~2 万字符 ≈ 几千 token，远小于模型窗口的 1M token
         return text[:20_000] + f"\n...（文件过长，已截断，共 {len(text)} 字符）"
     return text
 
@@ -63,27 +62,57 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
     if not p.is_file():
         return f"错误：文件不存在 {path}"
     text = p.read_text()
-    count = text.count(old_text)
+    count = text.count(old_text) # count 在计算 old_text 在整个文件里出现了几次。
     if count == 0:
         return "错误：没有找到要替换的文本，请先 read_file 确认内容完全一致"
     if count > 1:
         return f"错误：要替换的文本出现了 {count} 次，请提供更长的上下文让它唯一"
     p.write_text(text.replace(old_text, new_text))
+
+    # replace 用法：
+    # "hello world".replace("hello", "hi")          # "hi world"（变短）
+    # "hello world".replace("hello", "hello there")  # "hello there world"（变长）
+    # "hello world".replace("hello", "")             # " world"（直接删掉）
+
     return f"已修改 {path}"
 
 
 def run_bash(command: str) -> str:
     try:
+       
         result = subprocess.run(
             command, shell=True, capture_output=True, text=True, timeout=30
         )
+        # shell=True: 交给系统 shell 解析，支持管道/&&/重定向；
+        # capture_output=True: 抓回 stdout+stderr 而非直接打印到终端；
+        # text=True: 把返回的字节流解码成字符串（bytes → str），省去手动 .decode()
+
     except subprocess.TimeoutExpired:
         return "错误：命令执行超过 30 秒，已终止"
     output = (result.stdout + result.stderr).strip()
-    if len(output) > 10_000:
+    # 截断上限同理按"字符"算；模型上下文窗口按 token 计（1M token ≠ 100 万字符，英文 ≈ 4 字符/token）
+    if len(output) > 10_000:  # 10_000 == 10000 两种写法等价
         output = output[:10_000] + "\n...（输出过长，已截断）"
     return f"退出码 {result.returncode}\n{output}" if output else f"退出码 {result.returncode}（无输出）"
 
+
+def list_dir(path: str = ".") -> str:
+    '''
+    默认参数 path="."：. 是“当前目录”
+
+    运行：python miniagent/v02_tools/main.py "看看 miniagent/v02_tools 目录里有什么"
+
+    '''
+    try:
+        entries = sorted(p.name + ("/" if p.is_dir() else "") for p in Path(path).iterdir())
+        # Path(path).iterdir() —— 遍历目录下的每一项，产生 Path 对象（不是字符串），每个 p 依次是一个文件或子目录
+
+    except NotADirectoryError:
+        return f"错误：{path} 不是目录"
+    output = "\n".join(entries) if entries else "（空目录）"
+    if len(output) > 5_000:
+        output = output[:5_000] + "\n...（输出过长，已截断）"
+    return output
 
 # ---- 工具的 Schema：给模型看的"说明书" ----
 
@@ -147,6 +176,22 @@ TOOL_SCHEMAS = [
             },
         },
     },
+
+    # 新增 list_dir 工具的 Schema
+    {
+        "type": "function",
+        "function": {
+            "name": "list_dir",
+            "description": "列出指定目录下的文件和子目录，默认列出当前目录",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "目录路径，默认为当前目录"},
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 TOOL_FUNCTIONS = {
@@ -154,4 +199,5 @@ TOOL_FUNCTIONS = {
     "write_file": write_file,
     "edit_file": edit_file,
     "run_bash": run_bash,
+    "list_dir": list_dir, # 新增函数
 }

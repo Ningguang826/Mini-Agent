@@ -41,6 +41,9 @@ SYSTEM_PROMPT = (
 
 def main() -> None:
     task = " ".join(sys.argv[1:]) or input("任务> ").strip()
+    # sys.argv 是“命令行参数列表”：argv[0] 永远是脚本自己的名字（main.py），argv[1:] 切片取后面真正的参数。
+    # 运行：python miniagent/v02_tools/main.py "看一下 buggy_add.py 这个文件有什么问题"
+    # " "这里的空格是“不管用户引不引号都兜住”的容错写法。
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": task},
@@ -52,12 +55,31 @@ def main() -> None:
     )
     message = response.choices[0].message
 
+    print(f"[调试] 原始 finish_reason: {response.choices[0].finish_reason}")
+    print(f"[调试] message.tool_calls = {message.tool_calls}")   # Pydantic 对象会打印成结构化形式
+
+
     if not message.tool_calls:
         print(message.content)
         return
 
     # 第 2 步：模型说了它想调什么。注意 assistant 消息必须原样进历史
     messages.append(message)
+
+
+    # {
+    # "message": {
+    #     "role": "assistant",
+    #     "content": "我来帮你查询北京今天的天气。",
+    #     "reasoning_content": "用户想知道北京今天的天气。我需要使用get_weather工具，传入\"北京\"作为城市名。",
+    #     "tool_calls": [{
+    #     "id": "call_00_YtU5AfVNIzGbaTaBWbCV3295",
+    #     "type": "function",
+    #     "function": {"name": "get_weather", "arguments": "{\"city\": \"北京\"}"}
+    #     }]
+    # },
+    # "finish_reason": "tool_calls"
+    # }
 
     # 第 3 步：真正执行的是我们的代码，不是模型
     for call in message.tool_calls:

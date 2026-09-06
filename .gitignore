@@ -24,5 +24,3 @@ labs/
 /scripts/publish_feishu_course.py
 /scripts/verify_feishu_course.py
 
-.history/
-.vscode/

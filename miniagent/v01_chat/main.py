@@ -12,9 +12,15 @@ from openai import OpenAI
 
 def load_api_key() -> str:
     """优先读环境变量，其次读仓库根目录的 .env。"""
-    #   if key := ... 是 1.1 讲过的海象运算符：读环境变量，读到了就直接返回。
+    # :=  海象运算符：读环境变量，读到了就直接返回。边赋值边判断非空
     if key := os.environ.get("DEEPSEEK_API_KEY"):
         return key
+    # 普通写法需要两步：
+    # key = os.environ.get("DEEPSEEK_API_KEY")
+    # if key:
+    #     return key
+
+
     # Path(__file__).resolve().parents[2] 定位 .env 在哪：__file__ 是"当前这个 .py 文件自己的路径"，parents[2] 是往上数三层的祖先目录（main.py → v01_chat → miniagent → 仓库根）。这样无论你在哪个目录里运行它，都能找到仓库根下的 .env。
     env_file = Path(__file__).resolve().parents[2] / ".env" 
 
