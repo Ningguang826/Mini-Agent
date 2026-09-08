@@ -8,7 +8,7 @@
 
 用法：python rag_demo.py "你的问题" [语料目录]
 """
-
+import os
 import math
 import re
 import sys
@@ -16,6 +16,25 @@ from collections import Counter
 from pathlib import Path
 
 CHUNK_SIZE = 400  # 每块约 400 字符
+
+
+from openai import OpenAI
+
+def load_api_key() -> str:
+    if key := os.environ.get("DEEPSEEK_API_KEY"):
+        return key
+    env_file = Path(__file__).resolve().parents[2] / ".env"
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        if line.startswith("DEEPSEEK_API_KEY="):
+            return line.split("=", 1)[1].strip()
+    sys.exit("没有找到 DEEPSEEK_API_KEY")
+
+client = OpenAI(api_key=load_api_key(), base_url="https://api.deepseek.com")
+MODEL = "deepseek-v4-flash"
+
+
+
+
 
 
 def tokenize(text: str) -> list[str]:
@@ -29,14 +48,15 @@ def split_chunks(corpus_dir: Path) -> list[dict]:
     for path in sorted(corpus_dir.rglob("*.md")) + sorted(corpus_dir.rglob("*.py")):
         if any(part.startswith(".") for part in path.parts):
             continue
-        paragraphs = path.read_text().split("\n\n")
+        paragraphs = path.read_text(encoding="utf-8").split("\n\n")
         buffer = ""
         for para in paragraphs:
             if len(buffer) + len(para) > CHUNK_SIZE and buffer:
                 chunks.append({"source": str(path), "text": buffer.strip()})
                 buffer = ""
             buffer += para + "\n\n"
-        if buffer.strip():
+
+        if buffer.strip(): #循环最后一段可能没满 CHUNK_SIZE 也要加进 chunks
             chunks.append({"source": str(path), "text": buffer.strip()})
     return chunks
 
@@ -83,6 +103,16 @@ def search(
 
 
 if __name__ == "__main__":
+    # cd F:\MiniAgent\miniagent
+    # python miniagent\v05_search\rag_demo.py "你的查询"
+    
+    # 	查询	考察什么	预期
+    # 1	会话恢复	原文原词	高分真命中
+    # 2	怎么让对话有记忆	换了几个词（对话/记忆）	部分命中，分数下滑
+    # 3	重启后怎么接着上次聊	全部同义替换（重启/接着/聊）	大概率 miss 或泛词蹭分
+    # 4	session JSONL	英文词（语料里真实出现）	命中——词法检索不认语言只认字面
+    # 5	这个程序怎么处理文件	泛词（程序/文件/处理，到处都有）	低分蹭分区，重点观察对象
+
     query = sys.argv[1] if len(sys.argv) > 1 else "怎么让对话有记忆"
     corpus = (
         Path(sys.argv[2])
@@ -95,6 +125,25 @@ if __name__ == "__main__":
     results = search(query, chunks, idf)
     if not results:
         print("没有找到包含相同词语的内容。词法检索不理解同义表达。")
-    for score, chunk in results:
+
+    context_parts = []
+    for i,(score, chunk) in enumerate(results,1):
         print(f"—— 相似度 {score:.3f} | 来源 {chunk['source']}")
         print(chunk["text"][:150].replace("\n", " ") + "…\n")
+
+        part = f"[来源{i}] {chunk['source']}（相似度 {score:.3f}）\n{chunk['text']}"
+        context_parts.append(part)
+
+    context = "\n\n".join(context_parts)
+    prompt = (
+        "根据下面的检索资料回答问题，回答末尾标注用了哪些来源（如：来源：[来源1]）。"
+        "资料不足以回答用户回答需要诚实说明界限，告知用户资料不足并不能够提供确切回答，不要编造。\n\n"
+        f"问题：{query}\n\n资料：\n{context}"
+    )
+    
+    answer = client.chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": prompt}],
+    ).choices[0].message.content
+    print(f"\nRAG 回答：\n{answer}")
+

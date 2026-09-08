@@ -1,4 +1,4 @@
-"""MiniAgent v0.2 的工具层：read / write / edit / bash。
+"""MiniAgent v05 的工具层：read / write / edit / bash / + grep_code
 
 模型不能执行任何东西，它只能"说想执行什么"。
 真正碰文件系统、跑命令的，是这个文件里的普通 Python 函数。
@@ -45,7 +45,8 @@ def read_file(path: str) -> str:
     p = Path(path)
     if not p.is_file():
         return f"错误：文件不存在 {path}"
-    text = p.read_text()
+    # encoding="utf-8"：Windows 默认 GBK，中文文件必须显式 utf-8（同 v03/v04 补丁）
+    text = p.read_text(encoding="utf-8")
     if len(text) > 20_000:
         return text[:20_000] + f"\n...（文件过长，已截断，共 {len(text)} 字符）"
     return text
@@ -54,7 +55,7 @@ def read_file(path: str) -> str:
 def write_file(path: str, content: str) -> str:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content)
+    p.write_text(content, encoding="utf-8")   # 不写则按 GBK 落盘，读回会乱码
     return f"已写入 {path}（{len(content)} 字符）"
 
 
@@ -62,20 +63,24 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
     p = Path(path)
     if not p.is_file():
         return f"错误：文件不存在 {path}"
-    text = p.read_text()
+    text = p.read_text(encoding="utf-8")   # 同 read_file：显式 utf-8
     count = text.count(old_text)
     if count == 0:
         return "错误：没有找到要替换的文本，请先 read_file 确认内容完全一致"
     if count > 1:
         return f"错误：要替换的文本出现了 {count} 次，请提供更长的上下文让它唯一"
-    p.write_text(text.replace(old_text, new_text))
+    # 写回也必须 utf-8：读对了但写不带 encoding，Windows 会"读 UTF-8 写 GBK"转码污染
+    p.write_text(text.replace(old_text, new_text), encoding="utf-8")
     return f"已修改 {path}"
 
 
 def run_bash(command: str) -> str:
     try:
+        # encoding+errors（Windows 关键）：不指定时子进程输出按 GBK 解码，含中文输出会
+        # 崩读线程、stdout 变 None；errors="replace" 让解不了的字符退成 ? 而非崩溃
         result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=30
+            command, shell=True, capture_output=True, text=True, timeout=30,
+            encoding="utf-8", errors="replace",
         )
     except subprocess.TimeoutExpired:
         return "错误：命令执行超过 30 秒，已终止"
@@ -157,13 +162,17 @@ TOOL_FUNCTIONS = {
 }
 
 
-# ---- v0.5 新增：代码库检索工具 ----
+# ---- v0.5 新增：代码库检索工具grep ----
 
 import re
 
 
 def grep_code(pattern: str, directory: str = ".", file_glob: str = "*") -> str:
     """在目录下所有匹配 file_glob 的文本文件里正则搜索，返回 路径:行号:内容。"""
+    # pattern——正则表达式，必填
+    # directory="."——从哪搜，默认当前目录
+    # file_glob="*"——文件名过滤，"*.py" 就只搜 Python 文件
+
     root = Path(directory)
     if not root.is_dir():
         return f"错误：目录不存在 {directory}"
@@ -171,23 +180,36 @@ def grep_code(pattern: str, directory: str = ".", file_glob: str = "*") -> str:
         regex = re.compile(pattern)
     except re.error as e:
         return f"错误：正则表达式不合法：{e}"
+    
     hits = []
-    for path in sorted(root.rglob(file_glob)):
+    for path in sorted(root.rglob(file_glob)): # rglob = 递归 glob，把子目录,子子目录全部走一遍
         if not path.is_file() or any(part.startswith(".") for part in path.parts):
+            #  not is_file()跳过目录和隐藏目录/文件（如 .git、.venv）
+            # path.parts把完整路径拆成每一级目录元组,例：`/project/.venv/lib/a.py` → `('/', 'project', '.venv', 'lib', 'a.py')`
+            # 只要任意一级文件夹名字以 `.` 开头**（隐藏目录）,都跳过
             continue
+
         try:
-            lines = path.read_text().splitlines()
+            # encoding="utf-8"：Windows 默认 GBK，UTF-8 中文文件会被解成乱码（不报错但匹配失灵），
+            # 显式 utf-8 后二进制文件解码失败 → 走下面的 except 被跳过，行为跨平台一致
+            lines = path.read_text(encoding="utf-8").splitlines()
         except (UnicodeDecodeError, OSError):
             continue  # 跳过二进制和读不了的文件
+
         for lineno, line in enumerate(lines, 1):
-            if regex.search(line):
-                hits.append(f"{path}:{lineno}: {line.strip()[:200]}")
+            if regex.search(line): # 在行内找匹配 
+                hits.append(f"{path}:{lineno}: {line.strip()[:200]}") 
+                #- 返回 路径:行号:内容 三段式，模型拿到就能决定下一步 read 哪个文件的哪一带。
                 if len(hits) >= 50:
                     hits.append("...（超过 50 条命中，请用更精确的 pattern）")
+                    # - 超 50 条截断，且截断信息教它自救（"请用更精确的 pattern"）。
                     return "\n".join(hits)
-    return "\n".join(hits) if hits else "没有找到匹配"
+                
+    return "\n".join(hits) if hits else "没有找到匹配" # 最终返回hits
 
 
+
+# - Schema 的 description 里写了行为引导："在大项目里应该先 grep 定位再 read_file，不要逐个文件乱读"，工具说明书同时是行为规范。
 TOOL_SCHEMAS.append(
     {
         "type": "function",
