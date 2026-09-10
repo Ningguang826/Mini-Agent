@@ -16,7 +16,7 @@ from openai import OpenAI
 
 from tools import TOOL_SCHEMAS, decode_tool_arguments, execute_tool_call
 from mcp_client import MCP_PREFIX, call_mcp_tool, discover_mcp_tools
-from reviewer import run_reviewer, verdict_status
+from reviewer import run_reviewer
 
 
 def load_api_key() -> str:
@@ -31,7 +31,7 @@ def load_api_key() -> str:
 
 client = OpenAI(api_key=load_api_key(), base_url="https://api.deepseek.com")
 MODEL = "deepseek-v4-flash"
-MAX_TURNS = 30
+MAX_TURNS = 3
 
 # 压缩阈值：历史字符数超过它就触发 compact。
 # 真实系统按 token 精确计数（用模型的 tokenizer 或 usage 回报），
@@ -65,13 +65,13 @@ class Session:
         self.recovery_warning: str | None = None
 
     def append(self, message: dict) -> None:
-        with self.path.open("a") as f:
+        with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(message, ensure_ascii=False) + "\n")
 
     def load(self) -> list[dict]:
         if not self.path.exists():
             return []
-        lines = self.path.read_text().splitlines()
+        lines = self.path.read_text(encoding="utf-8").splitlines()
         messages = []
         for index, line in enumerate(lines):
             if not line.strip():
@@ -87,7 +87,7 @@ class Session:
 
     def rewrite(self, messages: list[dict]) -> None:
         """压缩后历史变了，整个文件重写一遍。"""
-        with self.path.open("w") as f:
+        with self.path.open("w", encoding="utf-8") as f:
             for m in messages:
                 f.write(json.dumps(m, ensure_ascii=False) + "\n")
 
@@ -252,24 +252,38 @@ if __name__ == "__main__":
     session_id = None
     if args and args[0] == "--resume":
         session_id = args[1]
+        print(f"恢复会话 {session_id}")
         args = args[2:]
+        
     task = " ".join(args) or None
     if not task and not session_id:
         task = input("任务> ").strip()
 
     session = Session(session_id)
-    print(f"会话 {session.id}（恢复：python agent.py --resume {session.id}）")
+    print(f"会话 {session.id}")
+
     answer = run_agent(task, session)
     print(f"\nMiniAgent> {answer}")
 
     # v0.7：评审环节。最多一次返工，避免两个模型互相拉扯不收敛
-    for review_round in range(2):
+    for review_round in range(1):
         print("\n—— 移交评审 ——")
         verdict = run_reviewer(client, MODEL, task or "（延续会话任务）", answer)
-        print(f"\n评审员> {verdict[:500]}")
-        status = verdict_status(verdict)
+        status = verdict["verdict"]
+        print(f"\n评审员> [{status}]")
+        for reason in verdict["reasons"]:
+            print(f"  - {reason}")
         if status == "APPROVE" or review_round == 1:
             break
-        feedback = f"评审员驳回了你的工作，意见如下，请修复后重新汇报：\n{verdict}"
+        if status == "ERROR":
+            # 评审失败 ≠ 工作被驳回：不返工，警告后放行。
+            # 旧文本协议里两者混在同一个字符串里，ERROR 会被当成
+            # "驳回意见"回喂主 Agent，触发一次莫名其妙的返工
+            print("警告：评审流程本身出错，本次成果未经评审。")
+            break
+        feedback = (
+            "评审员驳回了你的工作，意见如下，请修复后重新汇报：\n"
+            + "\n".join(f"- {r}" for r in verdict["reasons"])
+        )
         answer = run_agent(feedback, session)
         print(f"\nMiniAgent（返工后）> {answer}")
