@@ -45,7 +45,8 @@ def read_file(path: str) -> str:
     p = Path(path)
     if not p.is_file():
         return f"错误：文件不存在 {path}"
-    text = p.read_text()
+    # encoding="utf-8"：Windows 默认 GBK，中文文件必须显式 utf-8（同 v03/v04 补丁）
+    text = p.read_text(encoding="utf-8")
     if len(text) > 20_000:
         return text[:20_000] + f"\n...（文件过长，已截断，共 {len(text)} 字符）"
     return text
@@ -54,7 +55,7 @@ def read_file(path: str) -> str:
 def write_file(path: str, content: str) -> str:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content)
+    p.write_text(content, encoding="utf-8")   # 不写则按 GBK 落盘，读回会乱码
     return f"已写入 {path}（{len(content)} 字符）"
 
 
@@ -62,20 +63,24 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
     p = Path(path)
     if not p.is_file():
         return f"错误：文件不存在 {path}"
-    text = p.read_text()
+    text = p.read_text(encoding="utf-8")   # 同 read_file：显式 utf-8
     count = text.count(old_text)
     if count == 0:
         return "错误：没有找到要替换的文本，请先 read_file 确认内容完全一致"
     if count > 1:
         return f"错误：要替换的文本出现了 {count} 次，请提供更长的上下文让它唯一"
-    p.write_text(text.replace(old_text, new_text))
+    # 写回也必须 utf-8：读对了但写不带 encoding，Windows 会"读 UTF-8 写 GBK"转码污染
+    p.write_text(text.replace(old_text, new_text), encoding="utf-8")
     return f"已修改 {path}"
 
 
 def run_bash(command: str) -> str:
     try:
+        # encoding+errors（Windows 关键）：不指定时子进程输出按 GBK 解码，含中文输出会
+        # 崩读线程、stdout 变 None；errors="replace" 让解不了的字符退成 ? 而非崩溃
         result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=30
+            command, shell=True, capture_output=True, text=True, timeout=30,
+            encoding="utf-8", errors="replace",
         )
     except subprocess.TimeoutExpired:
         return "错误：命令执行超过 30 秒，已终止"
@@ -176,7 +181,9 @@ def grep_code(pattern: str, directory: str = ".", file_glob: str = "*") -> str:
         if not path.is_file() or any(part.startswith(".") for part in path.parts):
             continue
         try:
-            lines = path.read_text().splitlines()
+            # encoding="utf-8"：Windows 默认 GBK，UTF-8 中文文件会被解成乱码（不报错但匹配失灵），
+            # 显式 utf-8 后二进制文件解码失败 → 走下面的 except 被跳过，行为跨平台一致
+            lines = path.read_text(encoding="utf-8").splitlines()
         except (UnicodeDecodeError, OSError):
             continue  # 跳过二进制和读不了的文件
         for lineno, line in enumerate(lines, 1):

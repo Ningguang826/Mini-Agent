@@ -22,7 +22,7 @@ def load_api_key() -> str:
     if key := os.environ.get("DEEPSEEK_API_KEY"):
         return key
     env_file = Path(__file__).resolve().parents[2] / ".env"
-    for line in env_file.read_text().splitlines():
+    for line in env_file.read_text(encoding="utf-8").splitlines():
         if line.startswith("DEEPSEEK_API_KEY="):
             return line.split("=", 1)[1].strip()
     sys.exit("没有找到 DEEPSEEK_API_KEY")
@@ -64,13 +64,13 @@ class Session:
         self.recovery_warning: str | None = None
 
     def append(self, message: dict) -> None:
-        with self.path.open("a") as f:
+        with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(message, ensure_ascii=False) + "\n")
 
     def load(self) -> list[dict]:
         if not self.path.exists():
             return []
-        lines = self.path.read_text().splitlines()
+        lines = self.path.read_text(encoding="utf-8").splitlines()
         messages = []
         for index, line in enumerate(lines):
             if not line.strip():
@@ -86,7 +86,8 @@ class Session:
 
     def rewrite(self, messages: list[dict]) -> None:
         """压缩后历史变了，整个文件重写一遍。"""
-        with self.path.open("w") as f:
+        # encoding="utf-8"：同 append/load，Session 三处读写必须统一编码契约
+        with self.path.open("w", encoding="utf-8") as f:
             for m in messages:
                 f.write(json.dumps(m, ensure_ascii=False) + "\n")
 
@@ -181,7 +182,7 @@ def compact(messages: list[dict], verbose: bool = True) -> list[dict]:
 
 
 def run_agent(task: str | None, session: Session, verbose: bool = True) -> str:
-    # v0.6：启动时发现 MCP 工具，和本地工具合并成一张工具表
+    # v0.6：① 启动时发现 MCP 工具，和本地工具合并成一张工具表
     mcp_schemas = discover_mcp_tools()
     all_schemas = TOOL_SCHEMAS + mcp_schemas
     if verbose:
@@ -209,7 +210,8 @@ def run_agent(task: str | None, session: Session, verbose: bool = True) -> str:
 
         response = client.chat.completions.create(
             model=MODEL, messages=messages, tools=all_schemas
-        )
+        ) ## ② 每轮请求：用合并后的表
+
         message = response.choices[0].message
         assistant_msg = to_dict(message)
         messages.append(assistant_msg)
@@ -223,11 +225,14 @@ def run_agent(task: str | None, session: Session, verbose: bool = True) -> str:
         for call in message.tool_calls:
             name = call.function.name
             args, argument_error = decode_tool_arguments(call.function.arguments)
+
             if verbose:
                 brief = json.dumps(args, ensure_ascii=False)
                 print(f"[第 {turn} 轮] {name} {brief[:120]}")
             if argument_error:
                 result = argument_error
+
+            # ③ 执行时：按前缀分流。MCP 工具转发给 server,调用call_mcp_tool，否则的话本地工具直接调用execute_tool_call。
             elif name.startswith(MCP_PREFIX):
                 try:
                     result = call_mcp_tool(name, args)
@@ -235,6 +240,7 @@ def run_agent(task: str | None, session: Session, verbose: bool = True) -> str:
                     result = f"错误：MCP 工具调用失败：{type(exc).__name__}: {exc}"
             else:
                 result = execute_tool_call(name, args)
+
             if verbose:
                 print(f"        ↳ {result[:150].replace(chr(10), ' ')}")
             tool_msg = {
@@ -251,12 +257,15 @@ if __name__ == "__main__":
     session_id = None
     if args and args[0] == "--resume":
         session_id = args[1]
+        print(f"恢复会话 {session_id}")
         args = args[2:]
+        
     task = " ".join(args) or None
     if not task and not session_id:
         task = input("任务> ").strip()
 
     session = Session(session_id)
-    print(f"会话 {session.id}（恢复：python agent.py --resume {session.id}）")
+    print(f"会话 {session.id}")
+
     answer = run_agent(task, session)
     print(f"\nMiniAgent> {answer}")
