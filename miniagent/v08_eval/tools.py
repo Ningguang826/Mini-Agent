@@ -66,7 +66,7 @@ def read_file(path: str) -> str:
     p = workspace_path(path)
     if not p.is_file():
         return f"错误：文件不存在 {path}"
-    text = p.read_text()
+    text = p.read_text(encoding="utf-8")
     if len(text) > 20_000:
         return text[:20_000] + f"\n...（文件过长，已截断，共 {len(text)} 字符）"
     return text
@@ -75,7 +75,7 @@ def read_file(path: str) -> str:
 def write_file(path: str, content: str) -> str:
     p = workspace_path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content)
+    p.write_text(content, encoding="utf-8")
     return f"已写入 {path}（{len(content)} 字符）"
 
 
@@ -83,13 +83,13 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
     p = workspace_path(path)
     if not p.is_file():
         return f"错误：文件不存在 {path}"
-    text = p.read_text()
+    text = p.read_text(encoding="utf-8")
     count = text.count(old_text)
     if count == 0:
         return "错误：没有找到要替换的文本，请先 read_file 确认内容完全一致"
     if count > 1:
         return f"错误：要替换的文本出现了 {count} 次，请提供更长的上下文让它唯一"
-    p.write_text(text.replace(old_text, new_text))
+    p.write_text(text.replace(old_text, new_text), encoding="utf-8")
     return f"已修改 {path}"
 
 
@@ -229,7 +229,7 @@ def grep_code(pattern: str, directory: str = ".", file_glob: str = "*") -> str:
         if not path.is_file() or any(part.startswith(".") for part in path.parts):
             continue
         try:
-            lines = path.read_text().splitlines()
+            lines = path.read_text(encoding="utf-8").splitlines()
         except (UnicodeDecodeError, OSError):
             continue  # 跳过二进制和读不了的文件
         for lineno, line in enumerate(lines, 1):

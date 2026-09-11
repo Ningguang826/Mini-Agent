@@ -23,7 +23,7 @@ def load_api_key() -> str:
     if key := os.environ.get("DEEPSEEK_API_KEY"):
         return key
     env_file = Path(__file__).resolve().parents[2] / ".env"
-    for line in env_file.read_text().splitlines():
+    for line in env_file.read_text(encoding="utf-8").splitlines():
         if line.startswith("DEEPSEEK_API_KEY="):
             return line.split("=", 1)[1].strip()
     sys.exit("没有找到 DEEPSEEK_API_KEY")
@@ -65,13 +65,13 @@ class Session:
         self.recovery_warning: str | None = None
 
     def append(self, message: dict) -> None:
-        with self.path.open("a") as f:
+        with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(message, ensure_ascii=False) + "\n")
 
     def load(self) -> list[dict]:
         if not self.path.exists():
             return []
-        lines = self.path.read_text().splitlines()
+        lines = self.path.read_text(encoding="utf-8").splitlines()
         messages = []
         for index, line in enumerate(lines):
             if not line.strip():
@@ -87,7 +87,7 @@ class Session:
 
     def rewrite(self, messages: list[dict]) -> None:
         """压缩后历史变了，整个文件重写一遍。"""
-        with self.path.open("w") as f:
+        with self.path.open("w", encoding="utf-8") as f:
             for m in messages:
                 f.write(json.dumps(m, ensure_ascii=False) + "\n")
 

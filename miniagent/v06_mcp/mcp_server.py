@@ -70,6 +70,7 @@ def git_log(directory: str = ".", n: int = 5) -> str:
             # stdin=DEVNULL：否则 git 继承 server 的 stdin（连着 MCP client 的管道），
             #                孙进程和协议信道搅在一起，实测会卡死不返回
             # CREATE_NO_WINDOW：server 无控制台，不指定的话 git 会自己开一个新控制台
+            stdin=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         return f"[{repo}]\n{result.stdout.strip() or '(没有提交记录)'}"

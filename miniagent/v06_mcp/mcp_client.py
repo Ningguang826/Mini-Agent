@@ -24,11 +24,7 @@ MCP_PREFIX = "mcp__"  # 工具前缀名：挂在工具名前，让我们能分�
 # 要执行协程函数,必须交给事件循环驱动才能运行,需要使用 asyncio.run() 或 await。
 async def _list_tools() -> list[dict]:
     '''把 MCP 工具转成 OpenAI 工具表格式'''
-<<<<<<< HEAD
-    # 进入时用 SERVER 里配置的命令(当前 Python 解释器 + 同目录的mcp_servicer.py) 启动 server 子进程,并建立 stdio 通道。
-=======
     # 进入时用 SERVER 里配置的命令(当前 Python 解释器 + 同目录的mcp_server.py) 启动 server 子进程,并建立 stdio 通道。
->>>>>>> fc02e5bb0277c5826fa6c0474cc57c7f239adc8c
     # 通过子进程的 stdin/stdout 建立两条消息管道，返回 (read, write) 这一对读写流——as (read, write) 就是解包这个二元组。退出时关闭子进程、清理管道。
     async with stdio_client(SERVER) as (read, write): 
 
