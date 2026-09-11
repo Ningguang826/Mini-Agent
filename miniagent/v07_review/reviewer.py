@@ -4,10 +4,11 @@
 1. 独立的 messages —— 它没见过主 Agent 的思考过程，只看任务和成果，
    这正是评审价值的来源：没有"我写的肯定没错"的立场。
 2. 无源码修改工具 —— read / grep / run_tests，没有 write、edit 和任意 shell。
-3. 结构化裁决 —— 最终输出必须以 APPROVE 或 REJECT 开头，程序好解析。
+3. 结构化裁决 —— 最终输出必须是 {"verdict": ..., "reasons": [...]} JSON，程序好校验。
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -26,23 +27,74 @@ REVIEWER_PROMPT = (
     "2. 运行测试或程序验证，不要轻信它的汇报\n"
     "3. 检查有没有引入新问题（误删代码、多余修改、边界情况）\n\n"
     "你没有修改源码和执行任意 shell 的工具，不要尝试修改任何文件。\n"
-    "最终回答的第一行只能是 APPROVE 或 REJECT 这一个单词，"
-    "不要加粗、不要标题、不要表情符号，从第二行开始写说明：\n"
-    "APPROVE —— 工作合格，一句话说明核实了什么\n"
-    "REJECT —— 有问题，逐条列出问题和证据，给出修改建议"
+    "核实完成后，输出一个 JSON 对象作为最终裁决，不要输出其他任何文字：\n"
+    '{"verdict": "APPROVE", "reasons": ["一句话说明核实了什么"]}\n'
+    "或\n"
+    '{"verdict": "REJECT", "reasons": ["问题1及证据", "问题2及证据"]}\n'
+    "verdict 只能取 APPROVE 或 REJECT，reasons 必须是字符串数组，"
+    "不要用 markdown 代码块包裹。"
 )
 
 MAX_REVIEW_TURNS = 10
 
 
-def verdict_status(verdict: str) -> str:
-    """只接受未加装饰的精确状态，其他输出一律视为 ERROR。"""
-    first_line = verdict.strip().splitlines()[0] if verdict.strip() else ""
-    return first_line if first_line in {"APPROVE", "REJECT"} else "ERROR"
+VALID_VERDICTS = {"APPROVE", "REJECT"}
 
 
-def run_reviewer(client, model: str, task: str, report: str, verbose=True) -> str:
-    """跑一个没有源码修改工具的评审循环。"""
+class VerdictError(ValueError):
+    """裁决输出不符合协议。"""
+
+
+def parse_verdict(text: str) -> dict:
+    """从模型自由文本里提取并校验裁决 JSON，失败抛 VerdictError。
+
+    三层防御，每层只拦一种故障：
+    1. 剥围栏、截取 {...} —— 容忍模型加 markdown 和说明文字
+    2. json.loads —— 拦语法错误（单引号、尾逗号、中文引号）
+    3. schema 校验 —— 拦字段缺失、类型错、枚举值错
+    """
+    if not text or not text.strip():
+        raise VerdictError("输出为空")
+
+    cleaned = text.strip()
+    if cleaned.startswith("```"):  # ```json ... ```
+        cleaned = re.sub(r"^```[\w-]*\s*|\s*```$", "", cleaned).strip()
+        # 1. 左边：`^\`\`\`[\w-]*\s*`
+        # - `[\w-]*`：匹配可选的语言标记（`\w`：word 字符，等价 `[a-zA-Z0-9_]`，`-`横杠，`*`代表 0 个或多个，可以没有）
+        # - `\s*`：匹配后面任意空白（空格、换行）
+
+        # 2. 右边：`\s*\`\`\`$`
+        # - `\s*`：匹配末尾 ``` 前面的空白 / 换行
+        # - `$`：匹配**字符串结尾**
+
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start == -1 or end <= start:
+        raise VerdictError("输出里没有找到 JSON 对象")
+
+    try:
+        data = json.loads(cleaned[start : end + 1])
+    except json.JSONDecodeError as exc:
+        raise VerdictError(f"JSON 语法错误：{exc}") from exc
+
+    if not isinstance(data, dict):
+        raise VerdictError("JSON 顶层必须是对象")
+    if data.get("verdict") not in VALID_VERDICTS:
+        raise VerdictError(
+            f"verdict 必须是 APPROVE/REJECT，实际是 {data.get('verdict')!r}"
+        )
+    reasons = data.get("reasons", [])
+    if not isinstance(reasons, list) or not all(isinstance(r, str) for r in reasons):
+        raise VerdictError("reasons 必须是字符串数组")
+    return {"verdict": data["verdict"], "reasons": reasons}
+
+
+def run_reviewer(client, model: str, task: str, report: str, verbose=True) -> dict:
+    """跑一个没有源码修改工具的评审循环。
+
+    返回值保证是 {"verdict": "APPROVE"|"REJECT"|"ERROR", "reasons": [...]}，
+    调用方拿到的是数据而不是需要二次解析的文本——这就是接口加固：
+    解析和校验收敛在边界这一处，内部全走结构化对象。
+    """
     messages = [
         {"role": "system", "content": REVIEWER_PROMPT},
         {
@@ -56,10 +108,23 @@ def run_reviewer(client, model: str, task: str, report: str, verbose=True) -> st
         )
         message = response.choices[0].message
         if not message.tool_calls:
-            verdict = message.content or ""
-            if verdict_status(verdict) == "ERROR":
-                return "ERROR\n评审员没有按协议给出 APPROVE 或 REJECT"
-            return verdict
+            try:
+                return parse_verdict(message.content or "")
+            except VerdictError as exc:
+                # JSON 协议独有的自愈：错误能定位到字段，回喂后模型知道改什么。
+                # 文本协议只能说"你没按协议"，模型只能盲猜重试
+                if verbose:
+                    print(f"[评审 第 {turn} 轮] 裁决解析失败：{exc}")
+                messages.append(message)
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"你的输出不符合协议：{exc}\n"
+                        "请只输出一个符合格式的 JSON 对象，"
+                        "不要 markdown 代码块，不要任何其他文字。"
+                    ),
+                })
+            continue
         messages.append(message)
         for call in message.tool_calls:
             try:
@@ -73,4 +138,4 @@ def run_reviewer(client, model: str, task: str, report: str, verbose=True) -> st
             messages.append(
                 {"role": "tool", "tool_call_id": call.id, "content": result}
             )
-    return "ERROR\n评审超过轮数上限，未能完成核实"
+    return {"verdict": "ERROR", "reasons": ["评审超过轮数上限，未能完成核实"]}
